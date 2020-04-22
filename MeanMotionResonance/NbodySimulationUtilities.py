@@ -85,3 +85,48 @@ def _get_reboundx_simarchive_integration_results(sa):
             sim_results['Omega'][j,i] = orbit.Omega
             sim_results['inc'][j,i] = orbit.inc
     return sim_results
+
+def get_canonical_heliocentric_orbits(sim):
+    """
+    Compute orbital elements in canconical 
+    heliocentric coordinates.
+    """
+    star = sim.particles[0]
+    orbits = []
+    fictitious_star = rb.Particle(m=star.m)
+    for planet in sim.particles[1:]:
+
+        # Heliocentric position
+        r = np.array(planet.xyz) - np.array(star.xyz)
+
+        # Barycentric momentum
+        rtilde = planet.m * np.array(planet.vxyz)
+
+        # Mapping from (coordinate,momentum) pair to
+        # orbital elments requires that the 'velocity'
+        # i defined as the canonical momentum divided
+        # by 'mu' appearing in the definition of the
+        # Delauney variables( see, e.g., pg. 34 of
+        # Morbidelli 2002).
+        #
+        # For Laskar & Robutel (1995)'s definition
+        # of canonical action-angle pairs, this is
+        # the reduced mass.
+        #
+        # For democratic heliocentric elements,
+        # 'mu' is simply the planet mass.
+        mu = planet.m * star.m / (planet.m + star.m)
+        v_for_orbit = rtilde / mu
+
+        fictitious_particle =  rb.Particle(
+            m=planet.m,
+            x = r[0],
+            y = r[1],
+            z = r[2],
+            vx = v_for_orbit[0],
+            vy = v_for_orbit[1],
+            vz = v_for_orbit[2]
+        )
+        orbit = fictitious_particle.calculate_orbit(primary=fictitious_star,G = sim.G)
+        orbits.append(orbit)
+    return orbits
