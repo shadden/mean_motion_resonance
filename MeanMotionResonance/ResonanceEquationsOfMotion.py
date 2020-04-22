@@ -79,7 +79,70 @@ def _get_Omega_matrix(n):
         )
     )
 
-def simulation_to_dyvars(simulation,j,k):
+def canonical_heliocentric_orbital_elements_to_canonical_variables(m1,m2,a1,a2,e1,e2,inc1,inc2,lmbda1,lmbda2,omega1,omega2,Omega1,Omega2,j,k,mstar=1):
+    mu1  = m1 * mstar / (mstar  + m1) 
+    mu2  = m2 * mstar / (mstar  + m2) 
+    eta1 = mstar + m1
+    eta2 = mstar + m2
+    beta1 = mu1 * np.sqrt(eta1/mstar) / (mu1 + mu2)
+    beta2 = mu2 * np.sqrt(eta2/mstar) / (mu1 + mu2)
+
+    Q = (lmbda2 - lmbda1) / k
+    pomega1 = omega1 + Omega1
+    pomega2 = omega2 + Omega2
+    phi = j*lmbda2 - (j-k)*lmbda1  
+    theta1 = phi - k * pomega1
+    theta2 = phi - k * pomega2
+    nu = 2*np.pi - k * (Omega2 + Omega1) / 2
+    sigma1 = theta1 / k
+    sigma2 = theta2 / k
+
+    Ltot = mu1 * np.sqrt(eta1 * a1) * np.sqrt(1 - e1*e1) + mu2 * np.sqrt(eta2 * a2) * np.sqrt(1-e2*e2)
+    factor  = mu2 + mu1 * (eta1 / eta2)**(2/3) * ((j-k)/j)**(1/3)
+    a0 = (Ltot / factor)**2 / eta2
+    Lmbda1 = beta1 * np.sqrt(a1 / a0)
+    Lmbda2 = beta2 * np.sqrt(a2 / a0)
+
+    I1 = Lmbda1 * (1 - np.sqrt(1 - e1*e1))
+    I2 = Lmbda2 * (1 - np.sqrt(1 - e2*e2))
+
+    G1 = Lmbda1 - I1
+    G2 = Lmbda2 - I2
+    G1x = G1 * np.sin(inc1) * np.sin(Omega1)
+    G1y = -1 * G1 * np.sin(inc1) * np.cos(Omega1)
+    G1z = G1 * np.cos(inc1)
+    G2x = G2 * np.sin(inc2) * np.sin(Omega2)
+    G2y = -1 * G2 * np.sin(inc2) * np.cos(Omega2)
+    G2z = G2 * np.cos(inc2)
+    G1vec = np.array([G1x,G1y,G1z]) 
+    G2vec = np.array([G2x,G2y,G2z]) 
+    Gtot_vec = G1vec + G2vec
+    Gtot = np.sqrt(Gtot_vec @ Gtot_vec)
+    cosi1 = G1vec @ Gtot_vec / G1 / Gtot
+    cosi2 = G2vec @ Gtot_vec / G2 / Gtot
+    Q1 =  G1 * (1-cosi1)
+    Q2 =  G2 * (1-cosi2)
+    
+    N  = (Q1 + Q2)  / k
+
+    rt2I1 = np.sqrt(2*I1)
+    rt2I2 = np.sqrt(2*I2)
+    rt2N  = np.sqrt(2*N)
+
+    x1,y1 = rt2I1 * np.cos(sigma1), rt2I1 * np.sin(sigma1)
+    x2,y2 = rt2I2 * np.cos(sigma2), rt2I2 * np.sin(sigma2)
+    x_nu,y_nu = rt2N * np.cos(nu), rt2N * np.sin(nu)
+
+    Lmbda10 = beta1 * ( eta1/eta2 )**(1/6) * ((j-k)/j)**(1/3)
+    Lmbda20 = beta2  
+
+    s = (j-k) / k
+    P0 = k * (Lmbda20 - Lmbda10) / 2
+    P  = k * (Lmbda2 - Lmbda1) / 2 - k * (s+1/2) * (I1 + I2)
+    
+    AMD = (P0 - P) / k /(s + 1/2) 
+    
+    return np.array([y1,y2,y_nu,x1,x2,x_nu,AMD]),a0,Q1,Q2,Ltot,P,P0
 
 def _get_compiled_theano_functions(N_QUAD_PTS):
     # resonance j and k
@@ -100,8 +163,7 @@ def _get_compiled_theano_functions(N_QUAD_PTS):
     
     # Dynamical variables:
     dyvars = T.vector()
-    sigma1, sigma2, nu, I1, I2, N, amd = [dyvars[i] for i in range(7)]
-    y1, y2, y_nu, x1, x2, y_nu, amd = [dyvars[i] for i in range(7)]
+    y1, y2, y_nu, x1, x2, x_nu, amd = [dyvars[i] for i in range(7)]
 
     I1 = (y1*y1 + x1*x1) / 2
     I2 = (y2*y2 + x2*x2) / 2
@@ -128,27 +190,31 @@ def _get_compiled_theano_functions(N_QUAD_PTS):
     a10 = (eta1/eta2)**(1/3) * ((j-k)/j)**(2/3) * a20
     Lambda20 = beta2 * T.sqrt(a20)
     Lambda10 = beta1 * T.sqrt(a10)
-    Ltot = Lambda10 + Lambda20
-    # Choose z axis along angular momentum vector
-    Lz = Ltot
+    L = Lambda10 + Lambda20
+    
     P0 =  0.5 * k * (Lambda20 - Lambda10)
     P = P0 - k * (s+1/2) * amd
 
-    L1 = Ltot/2 - P / k - s * (I1 + I2)
-    L2 = Ltot/2 + P / k + (1 + s) * (I1 + I2)
+    L1 = L/2 - P / k - s * (I1 + I2)
+    L2 = L/2 + P / k + (1 + s) * (I1 + I2)
 
-    Q1 = 0.5 *  k * Lz + N
-    Q2 = 0.5 *  k * Lz - N
+    # Choose z axis along direction of total angular momentum
+    G1 = L1 - Gamma1
+    G2 = L2 - Gamma2
+    # Malige, Robutel, Laskar 2002 notation
+    r1 = N / k
+    r2_by_r1 = 0 # (G2 - G1) / (G1 + G2 - r1)
+    Q1 = 0.5 * r1 * (1 + r2_by_r1)
+    Q2 = 0.5 * r1 * (1 - r2_by_r1)
 
-    
     a1 = (L1 / beta1 )**2 
     e1 = T.sqrt(1-(1-(Gamma1 / L1))**2)
-    sinI1by2 = T.sqrt(0.5 * Q1 / (L1 - Gamma1)) 
+    sinI1by2 = T.sqrt(0.5 * Q1 / G1 ) 
     inc1 = 2 * T.arcsin(sinI1by2)
     
     a2 = (L2 / beta2 )**2 
     e2 = T.sqrt(1-(1-(Gamma2 / L2))**2)
-    sinI2by2 = T.sqrt(0.5 * Q2 / (L2 - Gamma2)) 
+    sinI2by2 = T.sqrt(0.5 * Q2 / G2 ) 
     inc2 = 2 * T.arcsin(sinI2by2)
     
     Hkep = -0.5 * T.sqrt(eta1) * beta1 / a1 - 0.5 * T.sqrt(eta2) * beta2 / a2
@@ -158,34 +224,109 @@ def _get_compiled_theano_functions(N_QUAD_PTS):
     M2 = l2 - pomega2
     sinf1,cosf1 =  ko( M1, e1 + T.zeros_like(M1) )
     sinf2,cosf2 =  ko( M2, e2 + T.zeros_like(M2) )
-    # nu = Omega2 - Omega1
-    Omega2 = T.constant(0.)
-    Omega1 = Omega2 - nu
-    omega1 = pomega1 + Omega1
-    omega2 = pomega2 + Omega2
+    # 
+    Omega2 = T.constant(-np.pi/2) - nu / k 
+    Omega1 = Omega2 + T.constant(np.pi)
+    omega1 = pomega1 - Omega1
+    omega2 = pomega2 - Omega2
     n1 = T.sqrt(eta1 / mstar ) * a1**(-3/2)
     n2 = T.sqrt(eta2 / mstar ) * a2**(-3/2)
-    Hint_dir,Hint_ind = calc_Hint_sinf_cosf(
-            a1,a2,e1,e2,inc1,inc2,omega1,omega2,Omega2-Omega1,n1,n2,sinf1,cosf1,sinf2,cosf2
+    Hint_dir,Hint_ind = calc_Hint_components_sinf_cosf(
+            a1,a2,e1,e2,inc1,inc2,omega1,omega2,Omega1,Omega2,n1,n2,sinf1,cosf1,sinf2,cosf2
     )
 
     eps = m1*m2/(mu1 + mu2) / T.sqrt(mstar * a20)
-    Htot = Hkep + eps * (Hint_dir + Hint_ind / mstar)
+    Hpert = (Hint_dir + Hint_ind / mstar).dot(quad_weights)
+    Htot = Hkep + eps * Hpert
+
+    #####################################################
+    # Set parameters for compiling functions with Theano
+    #####################################################
     
+    # Get numerical quadrature nodes and weights
+    nodes,weights = np.polynomial.legendre.leggauss(N_QUAD_PTS)
+    
+    # Rescale for integration interval from [-1,1] to [-pi,pi]
+    nodes = nodes * np.pi
+    weights = weights * 0.5
+    
+    # 'givens' will fix some parameters of Theano functions compiled below
+    givens = [(Q,nodes),(quad_weights,weights)]
+    
+    # 'ins' will set the inputs of Theano functions compiled below
+    #   Note: 'extra_ins' will be passed as values of object attributes
+    #   of the 'ResonanceEquations' class 'defined below
+    extra_ins = [m1,m2,j,k]
+    ins = [dyvars] + extra_ins
+    
+    orbels = [a1,e1,inc1, sigma1 * k , Omega1, a2,e2,inc2,sigma2 * k, Omega2]
+
+    #  Conservative flow
+    gradHtot = T.grad(Htot,wrt=dyvars)
+    hessHtot = theano.gradient.hessian(Htot,wrt=dyvars)
+    Jtens = T.as_tensor(np.pad(_get_Omega_matrix(3),(0,1),'constant'))
+    H_flow_vec = Jtens.dot(gradHtot)
+    H_flow_jac = Jtens.dot(hessHtot)
+
+    ##########################
+    # Compile Theano functions
+    ##########################
+    orbels_fn = theano.function(
+        inputs=ins,
+        outputs=orbels,
+        givens=givens,
+        on_unused_input='ignore'
+    )
+
+    Htot_fn = theano.function(
+        inputs=ins,
+        outputs=Htot,
+        givens=givens,
+        on_unused_input='ignore'
+    )
+
+    Hpert_fn = theano.function(
+        inputs=ins,
+        outputs=Hpert,
+        givens=givens,
+        on_unused_input='ignore'
+    )
+
+    H_flow_vec_fn = theano.function(
+        inputs=ins,
+        outputs=H_flow_vec,
+        givens=givens,
+        on_unused_input='ignore'
+    )
+    
+    H_flow_jac_fn = theano.function(
+        inputs=ins,
+        outputs=H_flow_jac,
+        givens=givens,
+        on_unused_input='ignore'
+    )
+
+    R_fn = theano.function(
+        inputs=ins,
+        outputs=r2_by_r1 * r1,
+        givens=givens,
+        on_unused_input='ignore'
+    )
+
     return dict({
-        'a1':a1,
-        'a2':a2,
-        'e1':e1,
-        'e2':e2,
-        'inc1':inc1,
-        'inc2':inc2,
-        'Hkep':Hkep,
-        'Hint_dir':Hint_dir,
-        'Hint_ind':Hint_ind,
-        'Htot':Htot
+        'orbital_elements':orbels_fn,
+        'Hamiltonian':Htot_fn,
+        'Hpert':Hpert_fn,
+        'Hamiltonian_flow':H_flow_vec_fn,
+        'Hamiltonian_flow_jacobian':H_flow_jac_fn,
+        'R_constant':R_fn
         })
 
-def calc_Hint_components_sinf_cosf(a1,a2,e1,e2,inc1,inc2,omega1,omega2,dOmega,n1,n2,sinf1,cosf1,sinf2,cosf2):
+     #'Hkep':Hkep,
+     #'Hint_dir':Hint_dir,
+     #'Hint_ind':Hint_ind,
+     #'Htot':Htot
+def calc_Hint_components_sinf_cosf(a1,a2,e1,e2,inc1,inc2,omega1,omega2,Omega1,Omega2,n1,n2,sinf1,cosf1,sinf2,cosf2):
     """
     Compute the value of the disturbing function
     .. math::
@@ -235,24 +376,24 @@ def calc_Hint_components_sinf_cosf(a1,a2,e1,e2,inc1,inc2,omega1,omega2,dOmega,n1
     _x1 = r1 * cosf1
     _y1 = r1 * sinf1
     _z1 = 0.
-    x1,y1,z1 = EulerAnglesTransform(_x1,_y1,_z1,0.,inc1,omega1)
+    x1,y1,z1 = EulerAnglesTransform(_x1,_y1,_z1,Omega1,inc1,omega1)
 
     vel1 = n1 * a1 / T.sqrt(1-e1*e1) 
     _u1 = -1 * vel1 * sinf1
     _v1 = vel1 * (e1 + cosf1)
     _w1 = 0.
-    u1,v1,w1 = EulerAnglesTransform(_u1,_v1,_w1,0.,inc1,omega1)
+    u1,v1,w1 = EulerAnglesTransform(_u1,_v1,_w1,Omega1,inc1,omega1)
 
     r2 = a2 * (1-e2*e2) /(1 + e2 * cosf2)
     _x2 = r2 * cosf2
     _y2 = r2 * sinf2
     _z2 = 0.
-    x2,y2,z2 = EulerAnglesTransform(_x2,_y2,_z2,dOmega,inc2,omega2)
+    x2,y2,z2 = EulerAnglesTransform(_x2,_y2,_z2,Omega2,inc2,omega2)
     vel2 = n2 * a2 / T.sqrt(2-e2*e2) 
     _u2 = -1 * vel2 * sinf2
     _v2 = vel2 * (e2 + cosf2)
     _w2 = 0.
-    u2,v2,w2 = EulerAnglesTransform(_u2,_v2,_w2,dOmega,inc2,omega2)
+    u2,v2,w2 = EulerAnglesTransform(_u2,_v2,_w2,Omega2,inc2,omega2)
 
     # direct term
     dx = x2 - x1
