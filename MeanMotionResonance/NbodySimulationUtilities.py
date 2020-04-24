@@ -15,6 +15,21 @@ def set_min_distance(sim,rhillfactor):
         sim.exit_min_distance = mindist
 
 def get_simarchive_integration_results(sa):
+    """
+    Read a simulation archive and store orbital elements
+    as arrays in a dictionary.
+
+    Arguments
+    ---------
+    sa : rebound.SimulationArchive 
+     The simulation archive to read. Can also be a reboundx simulation archive
+
+    Returns
+    -------
+    sim_results : dict
+        Dictionary containing time and orbital elements at each 
+        snapshot of the simulation archive.
+    """
     if type(sa) == rb.simulationarchive.SimulationArchive:
         return _get_rebound_simarchive_integration_results(sa)
     elif type(sa) == rbx.simulationarchive.SimulationArchive:
@@ -90,6 +105,17 @@ def get_canonical_heliocentric_orbits(sim):
     """
     Compute orbital elements in canconical 
     heliocentric coordinates.
+
+    Arguments:
+    ----------
+    sim : rb.Simulation
+        simulation for which to compute orbits
+
+    Returns
+    -------
+    list of rebound.Orbits
+        Orbits of particles in canonical heliocentric
+        coordinates.
     """
     star = sim.particles[0]
     orbits = []
@@ -130,3 +156,86 @@ def get_canonical_heliocentric_orbits(sim):
         orbit = fictitious_particle.calculate_orbit(primary=fictitious_star,G = sim.G)
         orbits.append(orbit)
     return orbits
+
+def add_canonical_heliocentric_elements_particle(m,elements,sim):
+    """
+    Add a new particle to a rebound simulation 
+    by specifying its mass and canonical heliocentric 
+    orbital elements.
+
+    Arguments
+    ---------
+    m : float
+        Mass of particle to add.
+    elements : dict
+        Dictionary of orbital elements for particle.
+        Dictionary must contain keys:
+            a,e,inc,lmbda,omega,Omega
+    sim : rebound.Simulation
+        Simulation to add particle to.
+    """
+    _sim = sim.copy()
+    star = _sim.particles[0]
+    _sim.add(
+            primary=star,
+            m=m,
+            a = elements['a'],
+            e = elements['e'],
+            inc = elements['inc'],
+            l = elements['lmbda'],
+            omega = elements['omega'],
+            Omega = elements['Omega']
+        )
+    _p = _sim.particles[-1]
+    p = _p.copy()
+    f = star.m / (p.m + star.m)
+    p.vx = f * ( _p.vx - star.vx )
+    p.vy = f * ( _p.vy - star.vy )
+    p.vz = f * ( _p.vz - star.vz )
+    sim.add(p)
+
+def _compute_transformation_angles(sim):
+    Gtot_vec = sim.calculate_angular_momentum()
+    Gtot_vec = np.array(Gtot_vec)
+    Gtot = np.sqrt(Gtot_vec @ Gtot_vec)
+    Ghat = Gtot_vec / Gtot
+    Ghat_z = Ghat[-1]
+    Ghat_perp = np.sqrt(1 - Ghat_z**2)
+    theta1 = np.pi/2 - np.arctan2(Ghat[1],Ghat[0])
+    theta2 = np.pi/2 - np.arctan2(Ghat_z,Ghat_perp)
+    return theta1,theta2
+
+def npEulerAnglesTransform(xyz,Omega,I,omega):
+    x,y,z = xyz
+    s1,c1 = np.sin(omega),np.cos(omega)
+    x1 = c1 * x - s1 * y
+    y1 = s1 * x + c1 * y
+    z1 = z
+
+    s2,c2 = np.sin(I),np.cos(I)
+    x2 = x1
+    y2 = c2 * y1 - s2 * z1
+    z2 = s2 * y1 + c2 * z1
+
+    s3,c3 = np.sin(Omega),np.cos(Omega)
+    x3 = c3 * x2 - s3 * y2
+    y3 = s3 * x2 + c3 * y2
+    z3 = z2
+
+    return np.array([x3,y3,z3])
+
+def align_simulation(sim):
+    """
+    Change particle positions and velocities
+    of a rebound simulations  so that the z-axis 
+    corresponds with the direction of the angular 
+    momentum. 
+
+    Arguments
+    ---------
+    sim : rebound.Simulation
+    """
+    theta1,theta2 = _compute_transformation_angles(sim)
+    for p in sim.particles:
+        p.x,p.y,p.z = npEulerAnglesTransform(p.xyz,0,theta2,theta1)
+        p.vx,p.vy,p.vz = npEulerAnglesTransform(p.vxyz,0,theta2,theta1) 
