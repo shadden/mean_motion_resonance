@@ -176,6 +176,18 @@ def _get_compiled_theano_functions():
     givens = []
     ins = [dyvars] + extra_ins
     orbels = [a1,e1,inc1,l1_r,pomega1_r,Omega1_r, a2,e2,inc2,l2_r,pomega2_r,Omega2_r]
+    orbels_dict = dict(zip(
+        ['a1','e1','inc1','l1','pomega1','Omega1','a2','e2','inc2','l2','pomega2','Omega2'],
+        orbels
+      )
+    )
+    actions = [L1,L2,Gamma1,Gamma2,rho1,rho2]
+    actions_dict = dict(
+            zip(
+                ['L1','L2','Gamma1','Gamma2','Q1','Q2'],
+                actions
+                )
+            )
     #  Conservative flow
     gradHtot = T.grad(Htot,wrt=dyvars)
     hessHtot = theano.gradient.hessian(Htot,wrt=dyvars)
@@ -188,11 +200,16 @@ def _get_compiled_theano_functions():
     ##########################
     orbels_fn = theano.function(
         inputs=ins,
-        outputs=orbels,
+        outputs=orbels_dict,
         givens=givens,
         on_unused_input='ignore'
     )
-
+    actions_fn = theano.function(
+        inputs=ins,
+        outputs=actions_dict,
+        givens=givens,
+        on_unused_input='ignore'
+    )
     rv1_fn = theano.function(
         inputs=ins,
         outputs=r1 + v1,
@@ -242,6 +259,7 @@ def _get_compiled_theano_functions():
     )
     return dict({
         'orbital_elements':orbels_fn,
+        'actions':actions_fn,
         'Hamiltonian':Htot_fn,
         'Hpert':Hpert_fn,
         'Hpert_components':Hpert_components_fn,
