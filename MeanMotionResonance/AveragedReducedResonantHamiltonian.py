@@ -71,7 +71,7 @@ def _get_compiled_theano_functions(N_QUAD_PTS):
 
     # Dynamical variables:
     dyvars = T.vector()
-    s1, s2, phi, Omega, I1, I2, Phi, Rtilde, Psi  = [dyvars[i] for i in range(9)]
+    s1, s2, phi, rtilde, I1, I2, Phi, Rtilde, Psi  = [dyvars[i] for i in range(9)]
 
     Ndof = 4
     Nconst = 1
@@ -79,15 +79,31 @@ def _get_compiled_theano_functions(N_QUAD_PTS):
     a20 = T.constant(1.)
     a10 = ((j-k)/j)**(2/3) * (eta1 / eta2)**(1/3) * a20
     #Rtilde = -1 * (beta1 * T.sqrt(a10) + beta2 * T.sqrt(a20))
-    #Omega = T.constant(0.)
-    l1 = phi - 0.5 * k * psi
-    l2 = phi + 0.5 * k * psi
+    ####
+    # angles
+    ####
+    Omega = -1 * rtilde
+    l1 = 0.5 * (s1 + s2) + phi + k * (1+s) * psi + Omega 
+    l2 = 0.5 * (s1 + s2) + phi + k * s * psi + Omega 
     gamma1 = s1 - (1 + s) * l2 + s * l1
     gamma2 = s2 - (1 + s) * l2 + s * l1
-    Gamma1 = I1
-    Gamma2 = I2
-    L1 = Phi / 2 - Psi / k - s * (I1 + I2)
-    L2 = Phi / 2 + Psi / k + (s+1) * (I1 + I2)
+    q1 = 0.5 * np.pi - Omega
+    q2 = -0.5 * np.pi - Omega
+
+    pomega1 = -1 * gamma1
+    pomega2 = -1 * gamma2
+    Omega1 = -1 * q1
+    Omega2 = -1 * q2
+    omega1 = pomega1 - Omega1
+    omega2 = pomega2 - Omega2
+
+    ###
+    # actions
+    ###
+    Gamma1 = I1 - 0.5 * Phi
+    Gamma2 = I2 - 0.5 * Phi
+    L1 = Psi / k - s * (I1 + I2)
+    L2 = -1*Psi / k + (1 + s) * (I1 + I2)
     Cz = -1 * Rtilde
 
     R = L1+L2-Gamma1-Gamma2-Cz
@@ -110,33 +126,20 @@ def _get_compiled_theano_functions(N_QUAD_PTS):
     inc1 = T.arccos(cos_inc1)
     inc2 = T.arccos(cos_inc2)
     
-    l1_r = l1 - Omega
-    l2_r = l2 - Omega
-    
-    Omega1_r = T.constant(np.pi/2) - Omega
-    Omega2_r = Omega1_r - T.constant(np.pi)
-    
-    pomega1 = -1 * gamma1
-    pomega2 = -1 * gamma2
-    
-    pomega1_r = pomega1 - Omega
-    pomega2_r = pomega2 - Omega
 
-    omega1 = pomega1_r - Omega1_r
-    omega2 = pomega2_r - Omega2_r
 
     Hkep = -0.5 * T.sqrt(eta1) * beta1 / a1 - 0.5 * T.sqrt(eta2) * beta2 / a2
 
     ko = KeplerOp()
-    M1 = l1_r - pomega1_r
-    M2 = l2_r - pomega2_r
+    M1 = l1 - pomega1
+    M2 = l2 - pomega2
     sinf1,cosf1 =  ko( M1, e1 + T.zeros_like(M1) )
     sinf2,cosf2 =  ko( M2, e2 + T.zeros_like(M2) )
     # 
     n1 = T.sqrt(eta1 / mstar ) * a1**(-3/2)
     n2 = T.sqrt(eta2 / mstar ) * a2**(-3/2)
     Hint_dir,Hint_ind,r1,r2,v1,v2 = calc_Hint_components_sinf_cosf(
-            a1,a2,e1,e2,inc1,inc2,omega1,omega2,Omega1_r,Omega2_r,n1,n2,sinf1,cosf1,sinf2,cosf2
+            a1,a2,e1,e2,inc1,inc2,omega1,omega2,Omega1,Omega2,n1,n2,sinf1,cosf1,sinf2,cosf2
     )
     eps = m1*m2/(mu1 + mu2) / T.sqrt(mstar)
     Hpert = (Hint_dir + Hint_ind / mstar)
@@ -168,6 +171,14 @@ def _get_compiled_theano_functions(N_QUAD_PTS):
             orbels
         )
     )
+    actions = [L1,L2,Gamma1,Gamma2,rho1,rho2]
+    actions_dict = dict(
+            zip(
+                ['L1','L2','Gamma1','Gamma2','Q1','Q2'],
+                actions
+                )
+            )
+
     #  Conservative flow
     gradHtot = T.grad(Htot,wrt=dyvars)
     hessHtot = theano.gradient.hessian(Htot,wrt=dyvars)
@@ -181,6 +192,12 @@ def _get_compiled_theano_functions(N_QUAD_PTS):
     orbels_fn = theano.function(
         inputs=ins,
         outputs=orbels_dict,
+        givens=givens,
+        on_unused_input='ignore'
+    )
+    actions_fn = theano.function(
+        inputs=ins,
+        outputs=actions_dict,
         givens=givens,
         on_unused_input='ignore'
     )
@@ -228,6 +245,7 @@ def _get_compiled_theano_functions(N_QUAD_PTS):
 
     return dict({
         'orbital_elements':orbels_fn,
+        'actions':actions_fn,
         'Rtilde':Rtilde_fn,
         'Hamiltonian':Htot_fn,
         'Hpert':Hpert_fn,
